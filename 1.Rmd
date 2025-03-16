@@ -1,0 +1,116 @@
+---
+title: "Week 1: R Programming Assignment - 50 points (LO1)"
+author: "guanhua"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Use the following files and variable
+- R Data Set: iris
+- R Grouping Variable: Species
+- R Numeric Variable: Sepal.Length
+- R Numeric Variable #2 (used for Scatter Plot): Sepal.Width
+- Warning: These will change from quarter to quarter.
+
+# Step 1: Describe the Data
+- List the structure of the data (str)
+- Execute a summary of the data
+- Print the first six records
+```{r data-description}
+str(iris)
+summary(iris)
+head(iris)
+```
+
+# Step 2: Box-Whisker Plots
+- Plot a box plot of the numeric variable split by the grouping variable. The plot needs the following:
+  - The MAIN TITLE of the box plot should be set to your name
+  - Add a notch to the boxes
+  - Add color to the boxes
+```{r boxplot}
+boxplot(Sepal.Length ~ Species,
+        data = iris,
+        notch = TRUE,
+        col = c("lightblue", "lightgreen", "lightpink"),
+        main = "guanhua")
+```
+
+# Step 3: Histograms
+- Plot a histogram of the numeric variable
+  - Manually set the number of breaks to a value that makes sense
+  - Superimpose a density line to the graph
+  - Push Yourself! Find a way to add color or decoration to this graph. Mention this work in your PDF/DOC file in order for the grader to see the work and give you credit.
+```{r histogram}
+hist(iris$Sepal.Length,
+     breaks = 12,
+     prob = TRUE,            # so the histogram can be compared to a density curve
+     col = "lightblue",      # a bit of color decoration
+     border = "black",       # adding borders for clarity
+     main = "Histogram of Sepal Length",
+     xlab = "Sepal Length")
+
+# Superimpose a density curve (in red) onto the histogram
+lines(density(iris$Sepal.Length), col = "red", lwd = 2)
+
+# Optionally, add a rug plot for additional decoration
+rug(iris$Sepal.Length, col = "darkblue")
+```
+
+# STEP 4: Scatter Plots
+- Create a scatter plot of the numeric variable and variable #2.
+  - Each group member needs to be in a different color
+  - Set the plot character to a value that is easy to see. Character value 16 is a good choice.
+  - Push Yourself! Find a way to add color or decoration to this graph. Mention this work in your PDF/DOC file in order for the grader to see the work and give you credit.
+```{r scatterplot}
+# Create a scatter plot for the two numeric variables:
+# x-axis: Sepal.Length, y-axis: Sepal.Width
+# Use a different color for each species and a common plotting character (pch = 16).
+plot(iris$Sepal.Length, iris$Sepal.Width,
+     col = as.numeric(iris$Species),   # different color for each species
+     pch = 16,
+     xlab = "Sepal Length",
+     ylab = "Sepal Width",
+     main = "Scatter Plot of Sepal Length vs. Sepal Width")
+
+# Add a legend mapping colors to species
+legend("topright",
+       legend = levels(iris$Species),
+       col = 1:length(levels(iris$Species)),
+       pch = 16)
+
+# Optionally, add a grid for enhanced decoration
+grid()
+```
+
+# STEP 5: Simple Math
+- For the numeric variable, compute the following statistics
+  - Mean
+  - Median
+  - Min
+  - Max
+  - Standard Deviation
+  - Calculate the Median for the numeric for each group member. Sort the result in Descending order.
+```{r simple-math}
+# Compute the basic statistics for the numeric variable Sepal.Length
+sepal_length_mean <- mean(iris$Sepal.Length)
+sepal_length_median <- median(iris$Sepal.Length)
+sepal_length_min <- min(iris$Sepal.Length)
+sepal_length_max <- max(iris$Sepal.Length)
+sepal_length_sd <- sd(iris$Sepal.Length)
+
+# Print the results
+cat("Mean of Sepal Length:", sepal_length_mean, "\n")
+cat("Median of Sepal Length:", sepal_length_median, "\n")
+cat("Min of Sepal Length:", sepal_length_min, "\n")
+cat("Max of Sepal Length:", sepal_length_max, "\n")
+cat("Standard Deviation of Sepal Length:", sepal_length_sd, "\n\n")
+
+# Compute the median of Sepal.Length for each species and sort in descending order
+median_by_species <- aggregate(Sepal.Length ~ Species, data = iris, FUN = median)
+median_by_species <- median_by_species[order(median_by_species$Sepal.Length, decreasing = TRUE), ]
+print(median_by_species)
+```
