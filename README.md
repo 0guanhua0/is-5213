@@ -3,7 +3,7 @@
 # code
 terminal
 ```
-guanhua@arch ~/is-5213 (git)-[master] % Rscript -e "lapply(Sys.glob('*.Rmd'), rmarkdown::render)"
+guanhua@arch ~/is-5213 (git)-[master] % Rscript -e "lapply(list.files(path = '.', pattern = '\\\\.Rmd$', recursive = TRUE, full.names = TRUE), rmarkdown::render)"
 ```
 
 [RStudio](https://rmarkdown.rstudio.com/articles_intro.html)

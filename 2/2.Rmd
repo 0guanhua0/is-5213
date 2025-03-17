@@ -1,0 +1,177 @@
+---
+title: "Week 2: R Programming Assignment - 50 points (LO2)"
+author: "guanhua"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy = TRUE, tidy.opts = list(width.cutoff = 60))
+```
+
+# Use the following file
+- R Data Set: HMEQ_Loss.csv (in the zip file attached).
+- The Data Dictionary in the zip file.
+- Grouping Variable: TARGET_BAD_FLAG
+
+# Step 1: Read in the Data
+- Read the data into R
+- List the structure of the data (str)
+- Execute a summary of the data
+- Print the first six records
+
+```{r read_data}
+# Read the data into R
+hmeq_data <- read.csv("HMEQ_Loss.csv")
+
+# List the structure of the data (str)
+str(hmeq_data)
+
+# Execute a summary of the data
+summary(hmeq_data)
+
+# Print the first six records
+head(hmeq_data)
+```
+
+# Step 2: Box-Whisker Plots
+- Plot a box plot of all the numeric variables split by the grouping variable. The plot needs the following:
+  - The MAIN TITLE of the box plot should be set to your name
+  - Add color to the boxes
+  - Comment on whether or not there are any observable differences in the box plots between the two groups.
+
+```{r box_plots}
+# Identify numeric variables (excluding TARGET_BAD_FLAG as it's the grouping variable and TARGET_LOSS_AMT which is not used for grouping)
+numeric_vars <- sapply(hmeq_data, is.numeric)
+numeric_vars["TARGET_BAD_FLAG"] <- FALSE # Exclude TARGET_BAD_FLAG
+numeric_vars["TARGET_LOSS_AMT"] <- FALSE # Exclude TARGET_LOSS_AMT
+numeric_col_names <- names(hmeq_data)[numeric_vars]
+
+# Create box plots for each numeric variable split by TARGET_BAD_FLAG
+par(mfrow=c(3, 4)) # Adjust layout as needed to fit all boxplots
+
+for (col_name in numeric_col_names) {
+  boxplot(hmeq_data[[col_name]] ~ hmeq_data$TARGET_BAD_FLAG,
+          main = paste(col_name, "by guanhua"),
+          xlab = "TARGET_BAD_FLAG",
+          ylab = col_name,
+          col = c("lightblue", "lightgreen")) # Add color to boxes
+}
+
+par(mfrow=c(1, 1)) # Reset to default layout
+
+# Comment on observable differences:
+# From the box plots, we can observe some potential differences between the two groups (TARGET_BAD_FLAG = 0 and TARGET_BAD_FLAG = 1)
+# for several numeric variables. For example, LOAN, MORTDUE, VALUE, DEROG, DELINQ, NINQ, and DEBTINC seem to have different distributions
+# between the two groups. Specifically, it appears that the group with TARGET_BAD_FLAG = 1 (bad loans) tends to have:
+# - Lower LOAN amounts
+# - Lower VALUE of the house
+# - Higher DEROG and DELINQ counts
+# - Slightly higher NINQ (number of inquiries)
+# - Higher DEBTINC (debt to income ratio)
+# These are just visual observations and would need further statistical testing to confirm significance.
+# Variables like YOJ and CLAGE might also show some differences but are less pronounced.
+```
+
+# Step 3: Histograms
+- Plot a histogram of at least one of the numeric variables
+  - Manually set the number of breaks to a value that makes sense
+  - Superimpose a density line to the graph
+
+```{r histograms}
+# Plot a histogram of the LOAN variable
+hist(hmeq_data$LOAN,
+     breaks = 20,
+     main = "Histogram of LOAN",
+     xlab = "Loan Amount",
+     ylab = "Frequency",
+     col = "skyblue",
+     freq = TRUE) # Ensure frequency is plotted
+
+# Superimpose a density line to the graph
+lines(density(hmeq_data$LOAN, na.rm = TRUE),
+      col = "red",
+      lwd = 2)
+```
+
+# Step 4: Impute "Fix" all the numeric variables that have missing values
+- For the missing Target variables, simply set the missing values to zero
+- For the remaining numeric variables with missing values, create two new variables. One variable will have a name beginning with IMP_ and it will contained the imputed value. The second value will have a name beginning with M_ and it will contain a 1 if the record was imputed and a zero if it was not.
+- You may impute with any method that makes sense. The median or mean value will be useful in most cases.
+- Push yourself! Try one complex imputation like the one described in the lectures.
+- Delete the original variable after it has been imputed.
+- Run a summary to prove that all the variables have been imputed
+- Compute a sum for all the M_ variables to prove that the number of flags is equal to the number of missing values.
+
+```{r impute_missing_values}
+# --- Impute missing values ---
+
+# Fix missing Target variables (TARGET_LOSS_AMT) to zero
+hmeq_data$TARGET_LOSS_AMT[is.na(hmeq_data$TARGET_LOSS_AMT)] <- 0
+
+# Identify numeric variables with missing values (excluding Target variables as they are handled separately)
+numeric_vars_missing <- numeric_col_names[colSums(is.na(hmeq_data[, numeric_col_names])) > 0]
+
+# Impute missing values for each numeric variable
+for (col_name in numeric_vars_missing) {
+  # --- Simple Imputation (Median) ---
+  median_val <- median(hmeq_data[[col_name]], na.rm = TRUE)
+  hmeq_data[[paste0("IMP_", col_name)]] <- ifelse(is.na(hmeq_data[[col_name]]), median_val, hmeq_data[[col_name]])
+
+  # --- Missing Value Flag ---
+  hmeq_data[[paste0("M_", col_name)]] <- ifelse(is.na(hmeq_data[[col_name]]), 1, 0)
+
+  # --- Complex Imputation Mean imputation based on JOB ---
+  mean_by_job <- aggregate(hmeq_data[[col_name]] ~ hmeq_data$JOB, data = hmeq_data, FUN = function(x) mean(x, na.rm = TRUE))
+  names(mean_by_job) <- c("JOB", paste0("MEAN_", col_name))
+  hmeq_data <- merge(hmeq_data, mean_by_job, by = "JOB", all.x = TRUE)
+  hmeq_data[[paste0("IMP_", col_name)]] <- ifelse(is.na(hmeq_data[[col_name]]),
+                                                  hmeq_data[[paste0("MEAN_", col_name)]],
+                                                  hmeq_data[[col_name]])
+  hmeq_data <- hmeq_data[, !(names(hmeq_data) %in% paste0("MEAN_", col_name))] # Remove MEAN_ variable after imputation
+
+  # --- Delete Original Variable ---
+  hmeq_data[[col_name]] <- NULL
+}
+
+# --- Run a summary to prove that all the variables have been imputed ---
+summary(hmeq_data)
+
+# --- Compute a sum for all the M_ variables to prove that the number of flags is equal to the number of missing values ---
+m_vars_names <- names(hmeq_data)[startsWith(names(hmeq_data), "M_")]
+missing_counts <- colSums(hmeq_data[, m_vars_names])
+print("Sum of M_ variables (Missing Value Counts):")
+print(missing_counts)
+
+# Verify against original missing values count (optional - for verification)
+original_missing_counts <- colSums(is.na(read.csv("HMEQ_Loss.csv")[,numeric_col_names]))
+print("Original Missing Value Counts:")
+print(original_missing_counts[names(original_missing_counts) %in% numeric_vars_missing])
+```
+
+
+# Step 5: One Hot Encoding
+- For the character / category variables, perform one hot encoding. For this create a Flag for each categories.
+- Delete the original class variable
+- Run a summary to show that the category variables have been replaced by Flag variables.
+
+```{r one_hot_encoding}
+# Identify character/category variables
+categorical_vars <- names(hmeq_data)[sapply(hmeq_data, is.character) | sapply(hmeq_data, is.factor)]
+
+# Perform one-hot encoding for each categorical variable
+for (col_name in categorical_vars) {
+  # Create dummy variables using model.matrix
+  dummies <- model.matrix(~ . -1, data = data.frame(Category = hmeq_data[[col_name]]))
+  dummies_df <- as.data.frame(dummies)
+  names(dummies_df) <- paste0("FLAG_", col_name, "_", colnames(dummies_df)) # Rename columns
+
+  # Combine with the main dataframe
+  hmeq_data <- cbind(hmeq_data, dummies_df)
+
+  # Delete the original categorical variable
+  hmeq_data[[col_name]] <- NULL
+}
+
+# --- Run a summary to show that the category variables have been replaced by Flag variables. ---
+summary(hmeq_data)
