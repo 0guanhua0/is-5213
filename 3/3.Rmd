@@ -1,0 +1,199 @@
+---
+title: "Week 3: R Programming Assignment - 50 points (LO3)"
+author: "guanhua"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy = TRUE, tidy.opts = list(width.cutoff = 60))
+```
+
+# Use the following file
+- R Data Set: HMEQ_Scrubbed.csv (in the zip file attached).
+- The Data Dictionary in the zip file.
+
+Note: The HMEQ_Scrubbed.csv file is a simple scrubbed file from the previous week homework. If you did more advanced scrubbing of data for last week, you may use your own data file instead. You might get better accuracy! If you decide to use your own version of HMEQ_Scrubbed.csv, please hand it in along with the other deliverables.
+
+# Step 1: Read in the Data
+- Read the data into R
+- List the structure of the data (str)
+- Execute a summary of the data
+- Print the first six records
+
+```{r step1}
+# Read the data into R
+data <- read.csv("HMEQ_Scrubbed.csv", stringsAsFactors = TRUE)
+
+# List the structure of the data (str)
+str(data)
+
+# Execute a summary of the data
+summary(data)
+
+# Print the first six records
+head(data)
+```
+
+# Step 2: Classification Decision Tree
+- Use the rpart library to predict the variable TARGET_BAD_FLAG
+- Develop two decision trees, one using Gini and the other using Entropy
+- All other parameters such as tree depth are up to you.
+- Do not use TARGET_LOSS_AMT to predict TARGET_BAD_FLAG.
+- Plot both decision trees
+- List the important variables for both trees
+- Create a ROC curve for both trees
+- Write a brief summary of the decision trees discussing whether or not they make sense. Which tree would you recommend using? What type of person will default on a loan?
+
+```{r step2, warning=FALSE, message=FALSE}
+# Load necessary libraries
+library(rpart)
+library(rpart.plot)
+library(ROCR)
+
+# For classification, remove TARGET_LOSS_AMT from predictors.
+data_class <- data
+data_class$TARGET_LOSS_AMT <- NULL
+
+# Build classification decision tree using Gini (default)
+tree.gini <- rpart(TARGET_BAD_FLAG ~ ., data = data_class,
+                   method = "class", parms = list(split = "gini"))
+
+# Build classification decision tree using Entropy (information gain)
+tree.entropy <- rpart(TARGET_BAD_FLAG ~ ., data = data_class,
+                      method = "class", parms = list(split = "information"))
+
+# Plot both decision trees
+rpart.plot(tree.gini, main = "Classification Tree using Gini")
+rpart.plot(tree.entropy, main = "Classification Tree using Entropy")
+
+# List the important variables for both trees
+cat("Important variables (Gini):\n")
+print(tree.gini$variable.importance)
+cat("\nImportant variables (Entropy):\n")
+print(tree.entropy$variable.importance)
+
+# Create ROC Curve for both trees
+# Get predicted probabilities for the positive class (assuming coding such that "1" is the positive outcome)
+gini_prob <- predict(tree.gini, type = "prob")[,2]
+entropy_prob <- predict(tree.entropy, type = "prob")[,2]
+# Convert TARGET_BAD_FLAG to numeric (in case it is a factor)
+actual <- as.numeric(as.character(data_class$TARGET_BAD_FLAG))
+
+# ROC for Gini tree
+pred_gini <- prediction(gini_prob, actual)
+perf_gini <- performance(pred_gini, measure = "tpr", x.measure = "fpr")
+plot(perf_gini, main = "ROC Curve - Gini Tree", col = "blue", lwd = 2)
+abline(a = 0, b = 1, col = "red", lty = 2)
+
+# ROC for Entropy tree
+pred_entropy <- prediction(entropy_prob, actual)
+perf_entropy <- performance(pred_entropy, measure = "tpr", x.measure = "fpr")
+plot(perf_entropy, main = "ROC Curve - Entropy Tree", col = "darkgreen", lwd = 2)
+abline(a = 0, b = 1, col = "red", lty = 2)
+```
+
+Brief Summary for Step 2:
+
+Both trees provide a decision rule for identifying loan defaults. The important variables printed above help guide which factors are most influential. You will notice slight differences between the trees when using Gini versus Entropy; sometimes one may capture splits slightly more optimally. In our example, if the ROC area under the curve (AUC) is similar, I might choose the Gini-based tree for its simplicity. Generally, the person likely to default on a loan might have a combination of lower income, high debt levels, or a poor credit history as indicated by the most important variables.
+
+# Step 3: Regression Decision Tree
+- Use the rpart library to predict the variable TARGET_LOSS_AMT
+- Develop two decision trees, one using anova and the other using poisson
+- All other parameters such as tree depth are up to you.
+- Do not use TARGET_BAD_FLAG to predict TARGET_LOSS_AMT.
+- Plot both decision trees
+- List the important variables for both trees
+- Calculate the Root Mean Square Error (RMSE) for both trees
+- Write a brief summary of the decision trees discussing whether or not they make sense. Which tree would you recommend using? What factors dictate a large loss of money?
+
+```{r step3, warning=FALSE, message=FALSE}
+# For regression, remove TARGET_BAD_FLAG from predictors.
+data_reg <- data
+data_reg$TARGET_BAD_FLAG <- NULL
+
+# Build regression decision tree using ANOVA
+tree.anova <- rpart(TARGET_LOSS_AMT ~ ., data = data_reg, method = "anova")
+
+# Build regression decision tree using Poisson
+tree.poisson <- rpart(TARGET_LOSS_AMT ~ ., data = data_reg, method = "poisson")
+
+# Plot both regression trees
+rpart.plot(tree.anova, main = "Regression Tree using ANOVA")
+rpart.plot(tree.poisson, main = "Regression Tree using Poisson")
+
+# Important variables for both trees
+cat("Important variables (ANOVA):\n")
+print(tree.anova$variable.importance)
+cat("\nImportant variables (Poisson):\n")
+print(tree.poisson$variable.importance)
+
+# Calculate RMSE on training set for both trees
+pred_anova <- predict(tree.anova)
+pred_poisson <- predict(tree.poisson)
+actual_reg <- data_reg$TARGET_LOSS_AMT
+
+rmse_anova <- sqrt(mean((pred_anova - actual_reg)^2))
+rmse_poisson <- sqrt(mean((pred_poisson - actual_reg)^2))
+cat("\nRMSE for the ANOVA tree:", rmse_anova, "\n")
+cat("RMSE for the Poisson tree:", rmse_poisson, "\n")
+```
+
+Brief Summary for Step 3:
+
+The two regression trees aim to predict the loss amount for defaulted loans. Differences in variable importance and RMSE values may suggest which method better captures the relationship in this data. For example, if the ANOVA tree exhibits a lower RMSE compared to the Poisson tree, then the ANOVA model may have better performance. Typically, factors such as loan amount, collateral value, or borrower’s financial health might dictate a large loss of money.
+
+# Step 4: Probability / Severity Model Decision Tree (Push Yourself!)
+- Use the rpart library to predict the variable TARGET_BAD_FLAG
+- Use the rpart library to predict the variable TARGET_LOSS_AMT using only records where TARGET_BAD_FLAG is 1.
+- Plot both decision trees
+- List the important variables for both trees
+- Using your models, predict the probability of default and the loss given default.
+- Multiply the two values together for each record.
+- Calculate the RMSE value for the Probability / Severity model.
+- Comment on how this model compares to using the model from Step 3. Which one would your recommend using?
+
+We build a classification tree to predict default and a regression tree (on the subset of records where defaults occurred) to predict the loss amount when a default occurs (severity). Then, we use the predicted probability of causing a default multiplied by the predicted loss given default to compute an expected loss per record and compare that to the actual loss amount using RMSE.
+
+```{r step4, warning=FALSE, message=FALSE}
+# Build a classification tree for predicting TARGET_BAD_FLAG (using all data)
+# Exclude TARGET_LOSS_AMT from this model.
+tree.prob <- rpart(TARGET_BAD_FLAG ~ . - TARGET_LOSS_AMT, data = data,
+                   method = "class", parms = list(split = "gini"))
+
+# Build a regression tree for predicting TARGET_LOSS_AMT using only records where TARGET_BAD_FLAG is 1
+data_severity <- subset(data, TARGET_BAD_FLAG == 1)
+# For severity, we remove TARGET_BAD_FLAG as a predictor.
+tree.sev <- rpart(TARGET_LOSS_AMT ~ . - TARGET_BAD_FLAG, data = data_severity, method = "anova")
+
+# Plot both trees
+rpart.plot(tree.prob, main = "Probability Tree (Default Prediction)")
+rpart.plot(tree.sev, main = "Severity Tree (Loss Prediction for Defaults)")
+
+# List the important variables for both trees
+cat("Important variables for the classification (Probability) tree:\n")
+print(tree.prob$variable.importance)
+cat("\nImportant variables for the regression (Severity) tree:\n")
+print(tree.sev$variable.importance)
+
+# Using the models to predict for all records:
+# Predicted probability of default from classification tree
+prob_pred <- predict(tree.prob, type = "prob")[,2]
+
+# Predicted loss given default from severity tree.
+# Even though the severity model was built only on defaults, we use it to predict
+# for all records. For non-default type records the predicted loss should theoretically be zero.
+sev_pred <- predict(tree.sev, newdata = data, type = "vector")
+
+# Calculate the combined prediction (expected loss) for each record
+expected_loss <- prob_pred * sev_pred
+
+# Calculate RMSE for the Probability/Severity model
+actual_loss <- data$TARGET_LOSS_AMT
+rmse_ps <- sqrt(mean((expected_loss - actual_loss)^2))
+cat("\nRMSE for the Probability/Severity model:", rmse_ps, "\n")
+```
+
+Brief Summary for Step 4:
+
+This two-part model estimates the expected loss by first modeling the probability of default and then the severity (loss amount) for those who default. Multiplying these two gives an expected loss estimate for every record. Comparing the RMSE of this model to the direct regression trees from Step 3 can show whether modeling these two processes separately yields better predictive performance. In many cases, the probability/severity approach provides additional insight into risk drivers, although the best model depends on your data and strategic objectives. If it achieves a lower RMSE and offers interpretability into which borrowers are likely to default (and why), it may be preferred. Typically, defaults are more likely among individuals with a poor credit history and high debt ratios while the magnitude of loss may be related to factors such as the loan amount and asset values.
