@@ -1,0 +1,332 @@
+---
+title: "Week 5: R Programming Random Forest / Gradient Boosting - 50 points (LO3)"
+author: "guanhua"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy = TRUE, tidy.opts = list(width.cutoff = 60))
+```
+
+# Use the following file
+- R Data Set: HMEQ_Scrubbed.csv (in the zip file attached).
+- The Data Dictionary in the zip file.
+
+Note: The HMEQ_Scrubbed.csv file is a simple scrubbed file from the previous week homework. If you did more advanced scrubbing of data for last week, you may use your own data file instead. You might get better accuracy! If you decide to use your own version of HMEQ_Scrubbed.csv, please hand it in along with the other deliverables.
+
+# Step 1: Read in the Data
+- Read the data into R
+- List the structure of the data (str)
+- Execute a summary of the data
+- Print the first six records
+
+```{r step1-read-data}
+data <- read.csv("HMEQ_Scrubbed.csv", stringsAsFactors = TRUE)
+str(data)
+summary(data)
+head(data)
+```
+
+# Step 2: Classification Models
+- Using the code discussed in the lecture, split the data into training and testing data sets.
+- Create a Decision Tree model using the rpart library to predict the variable TARGET_BAD_FLAG
+- Create a Random Forest model using the randomForest library to predict the variable TARGET_BAD_FLAG
+- Create a Gradient Boosting model using the gbm library to predict the variable TARGET_BAD_FLAG
+- All model parameters such as tree depth are up to you.
+- Do not use TARGET_LOSS_AMT to predict TARGET_BAD_FLAG.
+- Plot the Decision Tree and list the important variables for the tree.
+- List the important variables for the Random Forest and include the variable importance plot.
+- List the important variables for the Gradient Boosting model and include the variable importance plot.
+- Using the testing data set, create a ROC curves for all models. They must all be on the same plot.
+- Display the Area Under the ROC curve (AUC) for all models.
+- Rerun with different training and testing data at least three times.
+- Determine which model performed best and why you believe this.
+- Write a brief summary of which model you would recommend using. Note that this is your opinion. There is no right answer. You might, for example, select a less accurate model because it is faster or easier to interpret.
+
+```{r step2-load-libraries, warning=FALSE, message=FALSE}
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(ROCR)
+library(caret)
+```
+
+## Split Data into Training and Testing
+
+Here we set the seed (change it for reruns) and explicitly convert TARGET_BAD_FLAG to a factor (for tree and randomForest). Later, for gbm, we use a copy with a numeric response.
+
+```{r step2-split-data}
+set.seed(123)  # change seed for reruns
+data$TARGET_BAD_FLAG <- as.factor(data$TARGET_BAD_FLAG)
+splitIndex <- createDataPartition(data$TARGET_BAD_FLAG, p = 0.7, list = FALSE)
+train.class <- data[splitIndex, ]
+test.class <- data[-splitIndex, ]
+```
+
+## Decision Tree Model (Classification)
+
+```{r step2-decision-tree}
+# Note: Remove TARGET_LOSS_AMT from predictors
+tree.model <- rpart(TARGET_BAD_FLAG ~ . -TARGET_LOSS_AMT,
+                    data = train.class,
+                    method = "class")
+
+# Plot the tree
+rpart.plot(tree.model, main = "Classification Decision Tree")
+
+# List important variables (relative importance)
+print(tree.model$variable.importance)
+```
+
+## Random Forest Model (Classification)
+
+```{r step2-random-forest}
+# Build Random Forest for classification
+rf.model <- randomForest(TARGET_BAD_FLAG ~ . -TARGET_LOSS_AMT,
+                         data = train.class,
+                         importance = TRUE)
+print(rf.model)
+
+# Variable importance and plot
+print(importance(rf.model))
+rf.importance <- importance(rf.model)
+par(mar = c(10, 4, 4, 2))
+barplot(rf.importance[, 1],
+        names.arg = rownames(rf.importance),
+        las = 2,
+        main = "Random Forest Variable Importance",
+        col = "lightblue")
+```
+
+## Gradient Boosting Model (Classification)
+
+Because gbm’s “bernoulli” distribution requires that the response be numeric (0/1), we create a separate version of our training set with TARGET_BAD_FLAG converted to numeric.
+
+```{r step2-gbm, warning=FALSE}
+# Copy the training set and convert TARGET_BAD_FLAG to numeric (0,1)
+train.class.gbm <- train.class
+# Convert factor values "0" and "1" to numeric.
+train.class.gbm$TARGET_BAD_FLAG <- as.numeric(as.character(train.class.gbm$TARGET_BAD_FLAG))
+
+# Build Gradient Boosting model for classification using distribution = "bernoulli"
+gbm.model <- gbm(TARGET_BAD_FLAG ~ . -TARGET_LOSS_AMT,
+                 data = train.class.gbm,
+                 distribution = "bernoulli",
+                 n.trees = 500,
+                 interaction.depth = 3,
+                 shrinkage = 0.01,
+                 n.minobsinnode = 10,
+                 cv.folds = 5,
+                 verbose = FALSE)
+# Find the best iteration based on CV error:
+best.iter <- gbm.perf(gbm.model, method = "cv", plot.it = FALSE)
+print(best.iter)
+
+# Variable importance using summary
+gbm.importance <- summary(gbm.model, n.trees = best.iter, plotit = FALSE)
+print(gbm.importance)
+# Optionally, plot the relative influence of top variables:
+par(mar = c(10, 4, 4, 2))
+barplot(gbm.importance$rel.inf, names.arg = gbm.importance$var,
+        main = "GBM Variable Importance", las = 2, col = "lightblue")
+```
+
+## ROC Curves and AUC for all Models
+
+```{r step2-roc, warning=FALSE}
+# Predict probabilities on the test set
+tree.prob <- predict(tree.model, newdata = test.class, type = "prob")[,2]
+rf.prob   <- predict(rf.model, newdata = test.class, type = "prob")[,2]
+gbm.prob  <- predict(gbm.model, newdata = test.class, n.trees = best.iter, type = "response")
+
+# Using ROCR to build ROC objects
+pred.tree <- prediction(tree.prob, test.class$TARGET_BAD_FLAG)
+perf.tree <- performance(pred.tree, "tpr", "fpr")
+
+pred.rf <- prediction(rf.prob, test.class$TARGET_BAD_FLAG)
+perf.rf <- performance(pred.rf, "tpr", "fpr")
+
+pred.gbm <- prediction(gbm.prob, test.class$TARGET_BAD_FLAG)
+perf.gbm <- performance(pred.gbm, "tpr", "fpr")
+
+# Plot all ROC curves in one plot
+plot(perf.tree, col = "blue", lwd = 2, main = "ROC Curves for Classification Models")
+plot(perf.rf, col = "red", lwd = 2, add = TRUE)
+plot(perf.gbm, col = "green", lwd = 2, add = TRUE)
+legend("bottomright", legend = c("Decision Tree", "Random Forest", "GBM"),
+       col = c("blue", "red", "green"), lwd = 2)
+
+# Display AUC values
+auc.tree <- performance(pred.tree, measure = "auc")@y.values[[1]]
+auc.rf   <- performance(pred.rf, measure = "auc")@y.values[[1]]
+auc.gbm  <- performance(pred.gbm, measure = "auc")@y.values[[1]]
+cat("AUC for Decision Tree:", auc.tree, "\n")
+cat("AUC for Random Forest:", auc.rf, "\n")
+cat("AUC for GBM:", auc.gbm, "\n")
+```
+
+## Brief Summary of Classification Models
+
+Base on AUC, pick Random Forest.
+
+# Step 3: Regression Decision Tree
+- Using the code discussed in the lecture, split the data into training and testing data sets.
+- Create a Decision Tree model using the rpart library to predict the variable TARGET_LOSS_AMT
+- Create a Random Forest model using the randomForest library to predict the variable TARGET_LOSS_AMT
+- Create a Gradient Boosting model using the gbm library to predict the variable TARGET_LOSS_AMT
+- All model parameters such as tree depth are up to you.
+- Do not use TARGET_BAD_FLAG to predict TARGET_LOSS_AMT.
+- Plot the Decision Tree and list the important variables for the tree.
+- List the important variables for the Random Forest and include the variable importance plot.
+- List the important variables for the Gradient Boosting model and include the variable importance plot.
+- Using the testing data set, calculate the Root Mean Square Error (RMSE) for all models.
+- Rerun with different training and testing data at least three times.
+- Determine which model performed best and why you believe this.
+- Write a brief summary of which model you would recommend using. Note that this is your opinion. There is no right answer. You might, for example, select a less accurate model because it is faster or easier to interpret.
+
+## Split Data into Training and Testing for Regression
+
+```{r step3-split-data}
+set.seed(321)  # change seed for reruns
+splitIndex2 <- createDataPartition(data$TARGET_LOSS_AMT, p = 0.7, list = FALSE)
+train.reg <- data[splitIndex2, ]
+test.reg <- data[-splitIndex2, ]
+```
+
+## Decision Tree Regression Model
+
+```{r step3-decision-tree}
+tree.reg <- rpart(TARGET_LOSS_AMT ~ . -TARGET_BAD_FLAG,
+                  data = train.reg,
+                  method = "anova")
+rpart.plot(tree.reg, main = "Regression Decision Tree")
+print(tree.reg$variable.importance)
+# Predict on test
+pred.tree.reg <- predict(tree.reg, newdata = test.reg)
+rmse.tree <- sqrt(mean((test.reg$TARGET_LOSS_AMT - pred.tree.reg)^2))
+cat("RMSE for Regression Decision Tree:", rmse.tree, "\n")
+```
+
+## Random Forest Regression Model
+
+```{r step3-random-forest}
+rf.reg <- randomForest(TARGET_LOSS_AMT ~ . -TARGET_BAD_FLAG,
+                       data = train.reg,
+                       importance = TRUE)
+
+rf.reg.importance <- importance(rf.reg)
+print(rf.reg.importance)
+
+par(mar = c(10, 4, 4, 2))
+barplot(rf.reg.importance[, 1],
+        names.arg = rownames(rf.reg.importance),
+        las = 2,
+        main = "Random Forest Regression: Variable Importance",
+        col = "lightblue")
+
+# Predict on test
+pred.rf.reg <- predict(rf.reg, newdata = test.reg)
+rmse.rf <- sqrt(mean((test.reg$TARGET_LOSS_AMT - pred.rf.reg)^2))
+cat("RMSE for Random Forest Regression:", rmse.rf, "\n")
+```
+
+## Gradient Boosting Regression Model
+
+```{r step3-gbm, warning=FALSE}
+gbm.reg <- gbm(TARGET_LOSS_AMT ~ . -TARGET_BAD_FLAG,
+               data = train.reg,
+               distribution = "gaussian",
+               n.trees = 500,
+               interaction.depth = 3,
+               shrinkage = 0.01,
+               n.minobsinnode = 10,
+               cv.folds = 5,
+               verbose = FALSE)
+best.iter.reg <- gbm.perf(gbm.reg, method = "cv", plot.it = FALSE)
+gbm.reg.importance <- summary(gbm.reg, n.trees = best.iter.reg, plotit = FALSE)
+print(gbm.reg.importance)
+par(mar = c(10, 4, 4, 2))
+barplot(gbm.reg.importance$rel.inf,
+        names.arg = gbm.reg.importance$var,
+        main = "GBM Regression: Variable Importance",
+        las = 2,
+        col = "lightblue")
+# Predict on test
+pred.gbm.reg <- predict(gbm.reg, newdata = test.reg, n.trees = best.iter.reg)
+rmse.gbm <- sqrt(mean((test.reg$TARGET_LOSS_AMT - pred.gbm.reg)^2))
+cat("RMSE for GBM Regression:", rmse.gbm, "\n")
+```
+
+## Brief Summary of Regression Models
+
+```{r step3-summary}
+cat("RMSE for Regression Decision Tree:", rmse.tree, "\n")
+cat("RMSE for Random Forest Regression:", rmse.rf, "\n")
+cat("RMSE for GBM Regression:", rmse.gbm, "\n")
+```
+
+Based on RMSE, pick Random Forest.
+
+# Step 4: Probability / Severity Model Decision Tree (Push Yourself!)
+- Using the code discussed in the lecture, split the data into training and testing data sets.
+- Use any model from Step 2 in order to predict the variable TARGET_BAD_FLAG
+- Develop three models: Decision Tree, Random Forest, and Gradient Boosting to predict the variable TARGET_LOSS_AMT using only records where TARGET_BAD_FLAG is 1.
+- Select one of the models to predict damage.
+- List the important variables for both models.
+- Using your models, predict the probability of default and the loss given default.
+- Multiply the two values together for each record.
+- Calculate the RMSE value for the Probability / Severity model.
+- Rerun at least three times to be assured that the model is optimal and not over fit or under fit.
+- Comment on how this model compares to using the model from Step 3. Which one would your recommend using?
+
+## Build the Default Probability Model (Classification)
+
+```{r step4-default-prob}
+# Use Random Forest from Step 2 as the chosen model (you may choose another if preferred)
+# Here we use the same split as in Step 2 (test.class)
+default.prob <- predict(rf.model, newdata = test.class, type = "prob")[,2]
+```
+
+## Build the Severity Model (Regression) for Records with Default
+
+```{r step4-severity-model}
+# For severity, consider only records where TARGET_BAD_FLAG == 1 in the training set.
+train.severity <- subset(train.reg, TARGET_BAD_FLAG == 1)
+
+# Build three models; here we show the Decision Tree as an example.
+tree.severity <- rpart(TARGET_LOSS_AMT ~ . -TARGET_BAD_FLAG,
+                       data = train.severity, method = "anova")
+rpart.plot(tree.severity, main = "Default Severity: Decision Tree")
+print(tree.severity$variable.importance)
+
+# (You may also build Random Forest or GBM models for severity.)
+# For this example, we use tree.severity as our severity model.
+# For the test set, we assume that test.class contains both TARGET_BAD_FLAG and TARGET_LOSS_AMT.
+# Predict severity (loss given default) using tree.severity.
+pred.severity <- predict(tree.severity, newdata = test.class)
+```
+
+## Combine the Two Parts and Calculate RMSE
+
+```{r step4-combined-rmse}
+# For each record in test.class, compute the combined prediction:
+# predicted probability of default * predicted loss (if default)
+pred.combined <- default.prob * pred.severity
+
+# Calculate RMSE using the actual TARGET_LOSS_AMT (assumed to be 0 for non-default records)
+rmse.combined <- sqrt(mean((test.class$TARGET_LOSS_AMT - pred.combined)^2))
+cat("RMSE for Probability/Severity Model:", rmse.combined, "\n")
+```
+
+## Brief Comments on the Combined Model
+
+```{r step4-summary}
+cat("RMSE for Regression Decision Tree:", rmse.tree, "\n")
+cat("RMSE for Random Forest Regression:", rmse.rf, "\n")
+cat("RMSE for GBM Regression:", rmse.gbm, "\n")
+cat("RMSE for Probability/Severity Model:", rmse.combined, "\n")
+```
+
+Base on RMSE, pick Probability/Severity Model.
