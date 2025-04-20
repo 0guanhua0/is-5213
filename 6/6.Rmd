@@ -1,0 +1,387 @@
+---
+title: "Week 6: R Programming Logistic/Linear Regression - 50 points (LO3)"
+author: "guanhua"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy = TRUE, tidy.opts = list(width.cutoff = 60))
+```
+
+# Use the following file
+- R Data Set: HMEQ_Scrubbed.csv (in the zip file attached).
+- The Data Dictionary in the zip file.
+
+Note: The HMEQ_Scrubbed.csv file is a simple scrubbed file from the previous week homework. If you did more advanced scrubbing of data for last week, you may use your own data file instead. You might get better accuracy! If you decide to use your own version of HMEQ_Scrubbed.csv, please hand it in along with the other deliverables.
+
+This assignment is an extension of the Week 5 assignment. We will now incorporate Regression Analysis to the problem.
+
+# Step 1: Use the Decision Tree / Random Forest / Decision Tree code from Week 5 as a Starting Point
+
+In this assignment, we will build off the models developed in Week 5. Now we will add Regression to the models.
+
+```{r data-setup, message=FALSE, warning=FALSE}
+# 1) libraries
+library(rpart)       # for decision trees
+library(randomForest)
+library(gbm)
+library(caret)       # for createDataPartition
+library(ROCR)        # for ROC/AUC
+library(MASS)        # for stepAIC
+
+# 2) read the data
+data <- read.csv("HMEQ_Scrubbed.csv", stringsAsFactors=TRUE)
+
+# 3) create classification split
+data$TARGET_BAD_FLAG <- as.factor(data$TARGET_BAD_FLAG)
+set.seed(123)
+splitIndex <- createDataPartition(data$TARGET_BAD_FLAG, p=0.7, list=FALSE)
+train.class <- data[splitIndex, ]
+test.class  <- data[-splitIndex, ]
+
+# 4) create regression split
+set.seed(321)
+splitIndex2 <- createDataPartition(data$TARGET_LOSS_AMT, p=0.7, list=FALSE)
+train.reg <- data[splitIndex2, ]
+test.reg  <- data[-splitIndex2, ]
+
+# 5) pre‐fit the Week 5 models (so that tree.model, rf.importance, etc. exist)
+# 5a) classification tree
+tree.model <- rpart(TARGET_BAD_FLAG ~ . - TARGET_LOSS_AMT,
+                    data=train.class, method="class")
+
+# 5b) random forest (so rf.importance is defined)
+rf.model      <- randomForest(TARGET_BAD_FLAG ~ . - TARGET_LOSS_AMT,
+                              data=train.class,
+                              importance=TRUE)
+rf.importance <- importance(rf.model)
+
+# 5c) gbm for classification (so gbm.importance is defined)
+train.class.gbm <- train.class
+train.class.gbm$TARGET_BAD_FLAG <-
+  as.numeric(as.character(train.class.gbm$TARGET_BAD_FLAG))
+gbm.model <- gbm(TARGET_BAD_FLAG ~ . - TARGET_LOSS_AMT,
+                 data=train.class.gbm,
+                 distribution="bernoulli",
+                 n.trees=500,
+                 interaction.depth=3,
+                 shrinkage=0.01,
+                 n.minobsinnode=10,
+                 cv.folds=5,
+                 verbose=FALSE)
+best.iter      <- gbm.perf(gbm.model, method="cv", plot.it=FALSE)
+gbm.importance <- summary(gbm.model, n.trees=best.iter, plotit=FALSE)
+```
+
+# Step 2: Classification Models
+- Using the code discussed in the lecture, split the data into training and testing data sets.
+- Do not use TARGET_LOSS_AMT to predict TARGET_BAD_FLAG.
+- Create a LOGISTIC REGRESSION model using ALL the variables to predict the variable TARGET_BAD_FLAG
+- Create a LOGISTIC REGRESSION model and using BACKWARD VARIABLE SELECTION.
+- Create a LOGISTIC REGRESSION model and using a DECISION TREE and FORWARD STEPWISE SELECTION.
+- List the important variables from the Logistic Regression Variable Selections.
+- Compare the variables from the logistic Regression with those of the Random Forest and the Gradient Boosting.
+- Using the testing data set, create a ROC curves for all models. They must all be on the same plot.
+- Display the Area Under the ROC curve (AUC) for all models.
+- Determine which model performed best and why you believe this.
+- Write a brief summary of which model you would recommend using. Note that this is your opinion. There is no right answer. You might, for example, select a less accurate model because it is faster or easier to interpret.
+
+### 2.1 Full ‑ variable logistic regression
+
+```{r logit-full}
+logit.full <- glm(TARGET_BAD_FLAG ~ . - TARGET_LOSS_AMT,
+                  data = train.class,
+                  family = binomial)
+summary(logit.full)
+```
+
+### 2.2 Backward stepwise selection
+
+```{r logit-backward}
+# use AIC-based stepwise
+logit.back <- stepAIC(logit.full,
+                      direction = "backward",
+                      trace = FALSE)
+summary(logit.back)
+# variables retained:
+vars.back <- names(coef(logit.back))[-1]
+vars.back
+```
+
+### 2.3 Forward selection guided by decision tree
+
+```{r logit-forward}
+# pull out your forest/tree‐based variable ranking
+tree.vars <- names(tree.model$variable.importance)
+
+# define a truly “empty” model
+logit.null <- glm(TARGET_BAD_FLAG ~ 1,
+                  data = train.class,
+                  family = binomial)
+
+# build an upper-bound formula
+upper.form <- as.formula(
+  paste("TARGET_BAD_FLAG ~", paste(tree.vars, collapse = " + "))
+)
+
+# now run forward stepAIC
+logit.for <- stepAIC(logit.null,
+                     scope = list(lower = logit.null,
+                                  upper = upper.form),
+                     direction = "forward",
+                     trace = FALSE)
+
+summary(logit.for)
+vars.for <- names(coef(logit.for))[-1]
+vars.for
+```
+
+### 2.4 Compare important variables
+
+- logit.full: all
+
+- logit.back selected: `r paste(vars.back, collapse=", ")`
+
+- logit.for selected: `r paste(vars.for, collapse=", ")`
+
+- RF top 5: `r paste(rownames(rf.importance)[order(rf.importance[,1],decreasing=TRUE)[1:5]], collapse=", ")`
+- GBM top 5: `r paste(head(gbm.importance$var,5), collapse=", ")`
+
+### 2.5 ROC curves & AUC for all models
+
+```{r step2-logistic-roc, fig.width=6, fig.height=6}
+tree.prob <- predict(tree.model, newdata=test.class, type="prob")[,2]
+rf.prob   <- predict(rf.model,   newdata=test.class, type="prob")[,2]
+gbm.prob  <- predict(gbm.model,  newdata=test.class, n.trees=best.iter, type="response")
+
+# predict on test
+pred.log.full <- predict(logit.full, newdata = test.class, type = "response")
+pred.log.back <- predict(logit.back, newdata = test.class, type = "response")
+pred.log.for  <- predict(logit.for,  newdata = test.class, type = "response")
+
+# wrap into ROCR
+roc.log.full <- prediction(pred.log.full, test.class$TARGET_BAD_FLAG)
+roc.log.back <- prediction(pred.log.back, test.class$TARGET_BAD_FLAG)
+roc.log.for  <- prediction(pred.log.for,  test.class$TARGET_BAD_FLAG)
+roc.tree     <- prediction(tree.prob,  test.class$TARGET_BAD_FLAG)
+roc.rf       <- prediction(rf.prob,    test.class$TARGET_BAD_FLAG)
+roc.gbm      <- prediction(gbm.prob,   test.class$TARGET_BAD_FLAG)
+
+perf.log.full <- performance(roc.log.full, "tpr","fpr")
+perf.log.back <- performance(roc.log.back, "tpr","fpr")
+perf.log.for  <- performance(roc.log.for,  "tpr","fpr")
+perf.tree     <- performance(roc.tree,     "tpr","fpr")
+perf.rf       <- performance(roc.rf,       "tpr","fpr")
+perf.gbm      <- performance(roc.gbm,      "tpr","fpr")
+
+plot(perf.log.full, col="black", lwd=2, main="ROC: all Classification Models")
+plot(perf.log.back, add=TRUE, col="darkgreen", lwd=2)
+plot(perf.log.for,  add=TRUE, col="darkorange", lwd=2)
+plot(perf.tree,     add=TRUE, col="blue",   lwd=2)
+plot(perf.rf,       add=TRUE, col="red",    lwd=2)
+plot(perf.gbm,      add=TRUE, col="green",  lwd=2)
+legend("bottomright",
+       legend=c("Logit Full","Logit Back","Logit For",
+                "Tree","RF","GBM"),
+       col=c("black","darkgreen","darkorange","blue","red","green"),
+       lwd=2, cex=0.8)
+
+# AUC values
+auc <- function(pred) performance(pred,"auc")@y.values[[1]]
+cat(sprintf("AUC full:   %.3f\n", auc(roc.log.full)))
+cat(sprintf("AUC back:   %.3f\n", auc(roc.log.back)))
+cat(sprintf("AUC forw:   %.3f\n", auc(roc.log.for)))
+cat(sprintf("AUC tree:   %.3f\n", auc(roc.tree)))
+cat(sprintf("AUC RF:     %.3f\n", auc(roc.rf)))
+cat(sprintf("AUC GBM:    %.3f\n", auc(roc.gbm)))
+```
+
+### 2.6 Model comparison and recommendation
+
+Pick RF base due to highest AUC
+
+# Step 3: Linear Regression
+- Using the code discussed in the lecture, split the data into training and testing data sets.
+- Do not use TARGET_BAD_FLAG to predict TARGET_LOSS_AMT.
+- Create a LINEAR REGRESSION model using ALL the variables to predict the variable TARGET_BAD_AMT
+- Create a LINEAR REGRESSION model and using BACKWARD VARIABLE SELECTION.
+- Create a LINEAR REGRESSION model and using a DECISION TREE and FORWARD STEPWISE SELECTION.
+- List the important variables from the Linear Regression Variable Selections.
+- Compare the variables from the Linear Regression with those of the Random Forest and the Gradient Boosting.
+- Using the testing data set, calculate the Root Mean Square Error (RMSE) for all models.
+- Determine which model performed best and why you believe this.
+- Write a brief summary of which model you would recommend using. Note that this is your opinion. There is no right answer. You might, for example, select a less accurate model because it is faster or easier to interpret.
+
+### 3.1 Full linear model
+
+```{r lm-full}
+lm.full <- lm(TARGET_LOSS_AMT ~ . - TARGET_BAD_FLAG,
+              data = train.reg)
+summary(lm.full)
+```
+
+### 3.2 Backward stepwise
+
+```{r lm-backward}
+lm.back <- stepAIC(lm.full, direction="backward", trace=FALSE)
+summary(lm.back)
+vars.lm.back <- names(coef(lm.back))[-1]
+vars.lm.back
+```
+
+### 3.3 Forward selection via tree variables
+
+```{r lm-forward}
+library(rpart)
+tree.reg <- rpart(TARGET_LOSS_AMT ~ . - TARGET_BAD_FLAG,
+                  data = train.reg,
+                  method = "anova")
+
+library(randomForest)
+rf.reg <- randomForest(TARGET_LOSS_AMT ~ . - TARGET_BAD_FLAG,
+                       data = train.reg,
+                       importance = TRUE)
+rf.reg.importance <- importance(rf.reg)
+
+library(gbm)
+gbm.reg <- gbm(TARGET_LOSS_AMT ~ . - TARGET_BAD_FLAG,
+               data = train.reg,
+               distribution = "gaussian",
+               n.trees = 500,
+               interaction.depth = 3,
+               shrinkage = 0.01,
+               n.minobsinnode = 10,
+               cv.folds = 5,
+               verbose = FALSE)
+best.iter.reg <- gbm.perf(gbm.reg, method="cv", plot.it=FALSE)
+gbm.reg.importance <- summary(gbm.reg,
+                              n.trees = best.iter.reg,
+                              plotit = FALSE)
+
+vars.tree.reg <- names(tree.reg$variable.importance)
+upper.lm <- as.formula(
+  paste("TARGET_LOSS_AMT ~", paste(vars.tree.reg, collapse = " + "))
+)
+
+lm.null <- lm(TARGET_LOSS_AMT ~ 1, data = train.reg)
+lm.for  <- stepAIC(lm.null,
+                   scope = list(lower = lm.null, upper = upper.lm),
+                   direction = "forward",
+                   trace = FALSE)
+
+summary(lm.for)
+vars.lm.for <- names(coef(lm.for))[-1]
+vars.lm.for
+```
+
+### 3.4 Compare variables
+
+- Full: all
+
+- Backward: `r paste(vars.lm.back,collapse=", ")`
+
+- Forward:  `r paste(vars.lm.for,collapse=", ")`
+
+- RF‐reg top5: `r paste(rownames(rf.reg.importance)[order(rf.reg.importance[,1],decreasing=TRUE)[1:5]],collapse=", ")`
+
+- GBM‐reg top5: `r paste(head(gbm.reg.importance$var,5),collapse=", ")`
+
+### 3.5 RMSE for all regression models
+
+```{r step3-rmse}
+pred.tree.reg <- predict(tree.reg, newdata = test.reg)
+pred.rf.reg   <- predict(rf.reg,   newdata = test.reg)
+pred.gbm.reg  <- predict(gbm.reg,
+                         newdata = test.reg,
+                         n.trees = best.iter.reg)
+
+pred.lm.full <- predict(lm.full, newdata=test.reg)
+pred.lm.back <- predict(lm.back, newdata=test.reg)
+pred.lm.for  <- predict(lm.for,  newdata=test.reg)
+
+rmse <- function(actual,pred) sqrt(mean((actual-pred)^2))
+cat("RMSE lm.full:", rmse(test.reg$TARGET_LOSS_AMT,pred.lm.full), "\n")
+cat("RMSE lm.back:", rmse(test.reg$TARGET_LOSS_AMT,pred.lm.back), "\n")
+cat("RMSE lm.for: ", rmse(test.reg$TARGET_LOSS_AMT,pred.lm.for),  "\n")
+cat("RMSE tree.reg:", rmse(test.reg$TARGET_LOSS_AMT,pred.tree.reg), "\n")
+cat("RMSE rf.reg:  ", rmse(test.reg$TARGET_LOSS_AMT,pred.rf.reg),   "\n")
+cat("RMSE gbm.reg: ", rmse(test.reg$TARGET_LOSS_AMT,pred.gbm.reg),  "\n")
+```
+
+### 3.6 Recommendation
+
+Pick RF regression due to lowest RMSE
+
+# Step 4: Probability / Severity Model (Push Yourself!)
+- Using the code discussed in the lecture, split the data into training and testing data sets.
+- Use any LOGISTIC model from Step 2 in order to predict the variable TARGET_BAD_FLAG
+- Use a LINEAR REGRESSION model to predict the variable TARGET_LOSS_AMT using only records where TARGET_BAD_FLAG is 1.
+- List the important variables for both models.
+- Using your models, predict the probability of default and the loss given default.
+- Multiply the two values together for each record.
+- Calculate the RMSE value for the Probability / Severity model.
+- Comment on how this model compares to using the model from Step 3. Which one would your recommend using?
+
+### 4.1 Choose your best classification & regression sub‑models
+
+Here we’ll use:
+
+- default‐prob: `logit.back`
+
+- severity:    `lm.back` but trained on defaults only
+
+```{r step4-setup}
+# 1) Subset to defaults
+train.sev <- droplevels(subset(train.reg, TARGET_BAD_FLAG == 1))
+
+# 2) Remove all zero‐variance predictors
+#    This handles both numeric constants and factor constants.
+nzv <- nearZeroVar(train.sev)
+if(length(nzv) > 0) train.sev.clean <- train.sev[ , -nzv] else train.sev.clean <- train.sev
+
+# 3) Just to be extra‐safe, drop any factor with only 1 level
+single.level.factors <- sapply(train.sev.clean, function(x) is.factor(x) && nlevels(x)==1)
+if(any(single.level.factors)) {
+  train.sev.clean <- train.sev.clean[ , !single.level.factors]
+}
+
+# 4) Fit the full severity model and do backward selection
+lm.sev.full <- lm(TARGET_LOSS_AMT ~ ., data = train.sev.clean)
+lm.sev <- stepAIC(lm.sev.full,
+                  direction="backward",
+                  trace=FALSE)
+
+# 5) Check retained variables
+vars.sev <- names(coef(lm.sev))[-1]
+cat("Severity model keeps variables:\n")
+for(v in vars.sev) cat(" - ", v, "\n")
+```
+
+### 4.2 Predict severity for all test records
+
+```{r step4-severity-pred}
+# predict probability of default on the test set
+prob.default <- predict(logit.back,
+                        newdata = test.class,
+                        type = "response")
+# for records where bad=1 we trust lm.sev, else 0
+sev.pred <- predict(lm.sev, newdata=test.class)
+# replace NAs / for nondefaults set to zero or leave as-is
+sev.pred[is.na(sev.pred)] <- 0
+```
+
+### 4.3 Combined prediction & RMSE
+
+```{r step4-combine}
+combined.pred <- prob.default * sev.pred
+rmse <- function(actual,pred) sqrt(mean((actual-pred)^2))
+rmse.combined <- rmse(test.class$TARGET_LOSS_AMT, combined.pred)
+cat("RMSE Combined Prob*Sev:", rmse.combined, "\n")
+# compare to full regression:
+cat("RMSE linear full:", rmse(test.reg$TARGET_LOSS_AMT,pred.lm.full),"\n")
+```
+
+### 4.4 Comments
+
+Pick Probability × Severity model due to lower RMSE
