@@ -1,0 +1,343 @@
+---
+title: "Week 7: R Programming PCA and TSNE - 75 points (LO2)(LO3)(LO4)"
+author: "guanhua"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy = TRUE, tidy.opts = list(width.cutoff = 60))
+```
+
+# Use the following file
+- R Data Set: HMEQ_Scrubbed.csv (in the zip file attached).
+- The Data Dictionary in the zip file.
+
+Note: The HMEQ_Scrubbed.csv file is a simple scrubbed file from the previous week homework. If you did more advanced scrubbing of data for last week, you may use your own data file instead. You might get better accuracy! If you decide to use your own version of HMEQ_Scrubbed.csv, please hand it in along with the other deliverables.
+
+This assignment is an extension of the Week 6 assignment. The difference is that this assignment will now incorporate PCA and tSNE analysis.
+
+# Step 1: Use the Decision Tree / Random Forest / Decision Tree / Regression code from Week 6 as a Starting Point
+- In this assignment, we will not be doing all the analysis as before. But much of the code from week 6 can be used as a starting point for this assignment. For this assignment, do not be concerned with splitting data into training and test sets. In the real world, you would do that. But for this exercise, it would only be an unnecessary complication.
+
+```{r read-data, message=FALSE, warning=FALSE}
+library(tidyverse)
+
+hmeq <- read_csv("HMEQ_Scrubbed.csv")
+hmeq$TARGET_BAD_FLAG <- as.factor(hmeq$TARGET_BAD_FLAG)
+```
+
+```{r var-groups}
+# targets
+targets <- c("TARGET_BAD_FLAG", "TARGET_LOSS_AMT")
+
+# identify numeric, remove targets
+cont.vars <- names(Filter(is.numeric, hmeq)) %>% setdiff(targets)
+
+# identify factors having exactly 2 levels  -> treat as flags
+flag.vars <- names(Filter(is.factor, hmeq))
+```
+
+# Step 2: PCA Analysis
+- Use only the input variables. Do not use either of the target variables.
+- Use only the continuous variables. Do not use any of the flag variables.
+- Do a Principal Component Analysis (PCA) on the continuous variables.
+- Display the Scree Plot of the PCA analysis.
+- Using the Scree Plot, determine how many Principal Components you wish to use. Note, you must use at least two. You may decide to use more. Justify your decision. Note that there is no wrong answer. You will be graded on your reasoning, not your decision.
+- Print the weights of the Principal Components. Use the weights to tell a story on what the Principal Components represent.
+- Perform a scatter plot using the first two Principal Components. Color the scatter plot dots using the Target Flag. One color will represent "defaults" and the other color will represent "non defaults". Comment on whether you consider the first two Principal Components to be predictive. If you believe the graph is too cluttered, you are free to do a random sample of the data to make it more readable. That is up to you.
+
+```{r pca-run}
+pca.data <- hmeq %>% dplyr::select(dplyr::all_of(cont.vars)) %>% tidyr::drop_na()
+
+pca.obj  <- prcomp(pca.data, center = TRUE, scale. = TRUE)
+```
+
+## 2.1  Scree plot
+```{r pca-scree, fig.height=4}
+scree <- tibble(PC = seq_along(pca.obj$sdev),
+                Var = pca.obj$sdev^2,
+                Pct = Var / sum(Var))
+ggplot(scree, aes(PC, Var)) +
+  geom_line() + geom_point() +
+  labs(title = "Scree plot", y = "Eigenvalue")
+```
+
+elbow at PC5. keep PC1 to PC5
+
+## 2.2  Loadings (weights)
+```{r pca-loadings}
+pca.load <- as_tibble(pca.obj$rotation[, 1:4], rownames = "Variable")
+pca.load %>% print(n = Inf)
+```
+
+PC1
+
+- M_DELINQ  = 0.415
+- M_CLNO    = 0.406
+- M_NINQ    = 0.412
+- M_CLAGE   = 0.373
+- M_DEROG   = 0.376
+- M_YOJ     = 0.232
+- M_MORTDUE = 0.208
+
+PC2
+
+- IMP_MORTDUE = 0.479
+- IMP_VALUE   = 0.474
+- IMP_CLNO    = 0.343
+- LOAN        = 0.222
+- IMP_CLAGE   = 0.156
+- FLAG.Job.ProfExe = 0.256
+- FLAG.Job.Other   = -0.312
+
+PC3
+
+- FLAG.Reason.HomeImp  = 0.577
+- FLAG.Reason.DebtCon  = -0.583
+- IMP_VALUE           = 0.176
+- IMP_CLAGE           = 0.177
+
+PC4
+
+- M_DEBTINC  = -0.457
+- IMP_DELINQ = -0.432
+- IMP_DEROG  = -0.340
+- IMP_NINQ   = -0.262
+- FLAG.Reason.DebtCon = 0.241
+- LOAN       = 0.152
+- M_YOJ      = 0.169
+- M_VALUE    = -0.271
+
+PC1 - "Missing-data index"
+
+Almost every variable with a large loading starts with the prefix M_ (the missing-value indicators). A high score on PC1 therefore means the observation is missing many pieces of bureau information (delinquencies, credit lines, inquiries, etc.). Low scores correspond to records that are largely complete. In practice this component measures the overall availability of credit-bureau information for the applicant.
+
+PC2 - "Size of the balance sheet"
+
+The biggest contributors are the imputed dollar variables: mortgage balance (IMP_MORTDUE), property value (IMP_VALUE), number of credit lines (IMP_CLNO) and the requested LOAN amount. A high PC2 score describes borrowers dealing with large mortgage balances and high-value properties, i.e. a broad measure of financial scale or overall indebtedness/wealth. The weak negative loading for FLAG.Job.Other suggests that applicants in less-defined occupations tend to appear at the low-balance end of this axis.
+
+PC3 - "Loan purpose: Home-improvement vs. Debt-consolidation"
+
+This component is driven almost entirely by the two reason flags. Observations with very positive scores are overwhelmingly Home-Improvement loans, while very negative scores are Debt-Consolidation loans. PC3 therefore separates the two principal stated purposes without being strongly tied to any other financial variable.
+
+PC4 - "Credit quality / current stress"
+
+Large negative loadings come from delinquency counts, derogatory records, recent inquiries and debt-to-income (M_DEBTINC). High positive loadings come from years-on-job (M_YOJ) and loan amount. Thus the negative end of PC4 reflects borrowers with many recent credit problems and high leverage, whereas the positive end reflects cleaner credit files and more stable employment. In short, PC4 orders applicants from "credit-stressed" (negative) to "credit-healthy" (positive).
+
+Together these four components summarise the data as:
+
+- How much of the credit record is missing?
+- How large are the applicant’s assets and debts?
+- What is the stated purpose of the loan?
+- How good (or bad) is the current credit condition?
+
+These interpretations allow you to discuss or visualise applicants in a compact four-dimensional space
+
+## 2.3  Scatter plot of first two PCs
+```{r pca-scatter, fig.height=5}
+pca.scores <- as_tibble(pca.obj$x, .name_repair = "minimal")  # all PCs
+plot.df <- bind_cols(pca.scores, TARGET_BAD_FLAG = hmeq$TARGET_BAD_FLAG)
+
+ggplot(plot.df, aes(PC1, PC2, colour = TARGET_BAD_FLAG)) +
+  geom_point(alpha = 0.5) +
+  labs(title = "PCA scores coloured by default flag")
+```
+
+PC1 PC2 overlap so no predictive power
+
+# Step 3: tSNE Analysis
+- Use only the input variables. Do not use either of the target variables.
+- Use only the continuous variables. Do not use any of the flag variables.
+- Do a tSNE analysis on the data. Set the dimensions to 2. 
+- Run two tSNE analysis for Perplexity=30. Color the scatter plot dots using the Target Flag. One color will represent "defaults" and the other color will represent "non defaults". Comment on whether you consider the tSNE values to be predictive.
+- Repeat the previous step with a Perplexity greater than 30 (try to get a value much higher than 30).
+- Repeat the previous step with a Perplexity less than 30 (try to get a value much lower than 30).
+- Decide on which value of Perplexity best predicts the Target Flag.
+- Train two Random Forest Models to predict each of the tSNE values.
+
+```{r tsne-helper}
+library(Rtsne)
+
+tsne.run <- function(perp){
+  Rtsne(as.matrix(pca.data), dims = 2, perplexity = perp,
+        verbose = FALSE, max_iter = 1000)$Y %>%
+    as_tibble(.name_repair = "unique") %>%
+    set_names(c("tSNE1","tSNE2")) %>%
+    mutate(perplexity = perp)
+}
+```
+
+```{r tsne-exec}
+ts30  <- tsne.run(30)
+ts60  <- tsne.run(60)   # "much greater than 30"
+ts10  <- tsne.run(10)   # "much lower than 30"
+```
+
+## 3.1  Visualisation
+```{r tsne-plots, fig.height=10, fig.width=7}
+plot.tsne <- function(ts){
+  bind_cols(ts, TARGET_BAD_FLAG = hmeq$TARGET_BAD_FLAG) %>%
+    ggplot(aes(tSNE1, tSNE2, colour = TARGET_BAD_FLAG)) +
+    geom_point(alpha = .6) +
+    labs(title = paste("t-SNE (perplexity =", unique(ts$perplexity), ")"))
+}
+
+library(gridExtra)
+
+grid.arrange(plot.tsne(ts10), plot.tsne(ts30), plot.tsne(ts60), ncol = 1)
+```
+
+## 3.2  Random-Forest surrogates for t-SNE coordinates
+```{r rf-tsne}
+cc.idx      <- complete.cases(hmeq[cont.vars])
+hmeq.clean  <- hmeq[cc.idx, ]
+
+pca.data    <- hmeq.clean %>% dplyr::select(dplyr::all_of(cont.vars))
+pca.obj     <- prcomp(pca.data, center = TRUE, scale. = TRUE)
+
+ts10        <- tsne.run(10)
+hmeq.tsne   <- bind_cols(hmeq.clean, ts10)
+
+library(randomForest)
+
+rf.tsne1 <- randomForest(
+  tSNE1 ~ . - TARGET_BAD_FLAG - TARGET_LOSS_AMT - tSNE2,
+  data = hmeq.tsne, ntree = 300, importance = TRUE)
+
+rf.tsne2 <- randomForest(
+  tSNE2 ~ . - TARGET_BAD_FLAG - TARGET_LOSS_AMT - tSNE1,
+  data = hmeq.tsne, ntree = 300, importance = TRUE)
+```
+
+# Step 4: Tree and Regression Analysis on the Original Data
+- Create a Decision Tree to predict Loan Default (Target Flag=1). Comment on the variables that were included in the model.
+- Create a Logistic Regression model to predict Loan Default (Target Flag=1). Use either Forward, Backward, or Stepwise variable selection. Comment on the variables that were included in the model.
+- Create a ROC curve showing the accuracy of the model.
+- Calculate and display the Area Under the ROC Curve (AUC).
+
+## 4.1  Classification tree
+```{r orig-tree}
+library(rpart)
+library(rpart.plot)
+
+tree.orig <- rpart(TARGET_BAD_FLAG ~ . - TARGET_LOSS_AMT,
+                   data = hmeq, method = "class", cp = 0.002)
+rpart.plot(tree.orig, main = "Decision Tree - original predictors")
+
+unique(tree.orig$frame$var)
+sort(tree.orig$variable.importance, decreasing = TRUE)
+```
+The tree relies mainly on M_DEBTINC, IMP_DEBTINC, IMP_DELINQ
+
+## 4.2  Logistic regression (stepwise)
+```{r orig-logit}
+library(MASS)
+
+logit.full <- glm(TARGET_BAD_FLAG ~ . - TARGET_LOSS_AMT,
+                  data = hmeq, family = binomial)
+logit.step <- stepAIC(logit.full, trace = FALSE)
+summary(logit.step)$coefficients %>% head()
+```
+
+## 4.3  ROC and AUC
+```{r orig-roc, fig.height=4}
+library(pROC)
+
+prob.tree  <- predict(tree.orig, type = "prob")[,2]
+prob.logit <- predict(logit.step, type = "response")
+
+rocl <- roc(hmeq$TARGET_BAD_FLAG, prob.logit)
+roct <- roc(hmeq$TARGET_BAD_FLAG, prob.tree)
+
+plot(rocl, col="red",  main = "ROC - original predictors")
+plot(roct, col="blue", add = TRUE)
+legend("bottomright", c("Logit","Tree"), col=c("red","blue"), lwd=2)
+
+auc.orig.logit <- pROC::auc(rocl)
+auc.orig.tree  <- pROC::auc(roct)
+auc.orig.logit; auc.orig.tree
+```
+
+# Step 5: Tree and Regression Analysis on the PCA/tSNE Data
+- Append the Principal Component values from Step 2 to your data set.
+- Using the Random Forest models from Step 3, append the two tSNE values to the data set.
+- Remove all of the continuous variables from the data set (set them to NULL). Keep the flag variables in the data set. 
+- Create a Decision Tree to predict Loan Default (Target Flag=1). Comment on the variables that were included in the model. Did any of the Principal Components or tSNE values make it into the model? Discuss why or why not.
+- Create a Logistic Regression model to predict Loan Default (Target Flag=1). Use either Forward, Backward, or Stepwise variable selection. Comment on the variables that were included in the model. Did any of the Principal Components or tSNE values make it into the model? Discuss why or why not.
+- Create a ROC curve showing the accuracy of the model.
+- Calculate and display the Area Under the ROC Curve (AUC).
+
+```{r assemble-modeling-table}
+# attach 4 PCs and 2 tSNE coordinates
+hmeq.new <- bind_cols(hmeq, pca.scores[,1:4], ts10 %>% dplyr::select(tSNE1, tSNE2))
+
+# drop original continuous vars
+hmeq.new <- hmeq.new %>% dplyr::select(-all_of(cont.vars))
+```
+
+## 5.1  Decision tree
+```{r tree-new}
+tree.new <- rpart(TARGET_BAD_FLAG ~ ., data = hmeq.new, method = "class")
+rpart.plot(tree.new, main = "Decision tree - PCs + tSNE + flags")
+```
+
+## 5.2  Stepwise logistic regression
+```{r logit-step}
+## Remove zero-variance predictors
+nzv   <- caret::nearZeroVar(hmeq.new, saveMetrics = TRUE)
+hmeq.red <- hmeq.new[ , !nzv$zeroVar]
+
+## ---------- Ridge-penalised logistic without separation ----------
+x <- model.matrix(TARGET_BAD_FLAG ~ . , hmeq.red)[,-1]
+y <- hmeq.red$TARGET_BAD_FLAG
+
+library(glmnet)
+
+set.seed(1234)
+cvfit <- cv.glmnet(x, y, alpha = 0, family = "binomial")   # ridge
+prob  <- predict(cvfit, newx = x, s = "lambda.min", type = "response")
+
+## ---------- Stepwise (AIC) -------------
+tab <- sapply(hmeq.red[ , names(hmeq.red) != "TARGET_BAD_FLAG"],
+              function(z) length(unique(z[hmeq.red$TARGET_BAD_FLAG == 1])))
+bad <- names(which(tab == 1))
+hmeq.red2 <- hmeq.red[ , !names(hmeq.red) %in% bad]
+
+logit0    <- glm(TARGET_BAD_FLAG ~ 1,
+                 data = hmeq.red2, family = binomial)
+logitFull <- glm(TARGET_BAD_FLAG ~ .,
+                 data = hmeq.red2, family = binomial)
+logit.stp <- stepAIC(logit0,
+                     scope = list(lower = logit0, upper = logitFull),
+                     direction = "both")
+
+# coefficients of the ridge solution as offsets
+off <- predict(cvfit, newx = x, s = "lambda.min", type = "link")
+glm.off <- glm(TARGET_BAD_FLAG ~ 1, offset = off,
+               data = hmeq.red, family = binomial)
+```
+
+## 5.3  ROC / AUC
+```{r new-roc, fig.height=4}
+prob.tree2  <- predict(tree.new , type = "prob")[,2]
+prob.logit2 <- predict(logit.step, type = "response")
+
+rocl2 <- roc(hmeq$TARGET_BAD_FLAG, prob.logit2)
+roct2 <- roc(hmeq$TARGET_BAD_FLAG, prob.tree2)
+
+plot(rocl2, col="red",  main = "ROC - reduced-dimension predictors")
+plot(roct2, col="blue", add = TRUE)
+legend("bottomright", c("Logit-RD","Tree-RD"), col=c("red","blue"), lwd=2)
+
+auc.red.logit <- pROC::auc(rocl2)
+auc.red.tree  <- pROC::auc(roct2)
+auc.red.logit; auc.red.tree
+```
+
+# Step 6: Comment
+- Discuss how the PCA / tSNE values performed when compared to the original data set.
+
+PCA: 5 components explained ~`r round(sum(scree$Pct[1:5])*100,0)` % of variance and expose mild default separation
+
+t-SNE: Low perplexity (=10) created the clearest cluster
