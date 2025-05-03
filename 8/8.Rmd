@@ -1,0 +1,235 @@
+---
+title: "Week 8: R Programming Cluster Analysis - 75 points (LO2)(LO3) (LO4)"
+author: "guanhua"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy = TRUE, tidy.opts = list(width.cutoff = 60))
+```
+
+# Use the following file
+
+- R Data Set: HMEQ_Scrubbed.csv (in the zip file attached).
+- The Data Dictionary in the zip file.
+
+Note: The HMEQ_Scrubbed.csv file is a simple scrubbed file from the previous week homework. If you did more advanced scrubbing of data for last week, you may use your own data file instead. You might get better accuracy! If you decide to use your own version of HMEQ_Scrubbed.csv, please hand it in along with the other deliverables.
+
+This assignment is an extension of the Week 6 assignment. The difference is that this assignment will now incorporate PCA and tSNE analysis.
+
+# Step 1: Use the code from Week 7 as a Starting Point
+
+- In this assignment, we will not be doing all the analysis as before. But much of the code from week 6 can be used as a starting point for this assignment. For this assignment, do not be concerned with splitting data into training and test sets. In the real world, you would do that. But for this exercise, it would only be an unnecessary complication.
+
+```{r read, message=FALSE, warning=FALSE}
+library(tidyverse)
+
+hmeq <- read_csv("HMEQ_Scrubbed.csv")
+hmeq$TARGET_BAD_FLAG <- factor(hmeq$TARGET_BAD_FLAG)
+```
+
+# Step 2: PCA Analysis
+
+- Use only the input variables. Do not use either of the target variables.
+- Use only the continuous variables. Do not use any of the flag variables.
+- Select at least 4 of the continuous variables. It would be preferable if there were a theme to the variables selected.
+- Do a Principal Component Analysis (PCA) on the continuous variables.
+- Display the Scree Plot of the PCA analysis.
+- Using the Scree Plot, determine how many Principal Components you wish to use. Note, you must use at least two. You may decide to use more. Justify your decision. Note that there is no wrong answer. You will be graded on your reasoning, not your decision.
+- Print the weights of the Principal Components. Use the weights to tell a story on what the Principal Components represent.
+- Perform a scatter plot using the first two Principal Components. Do not color the dots. Leave them black.
+
+## 2.1  Choose a themed set of continuous variables
+```{r vars}
+cont_candidates <- c("LOAN",
+                     "IMP_MORTDUE",
+                     "IMP_VALUE",
+                     "IMP_CLAGE",
+                     "IMP_DEBTINC")
+hmeq_pca <- hmeq %>%
+  dplyr::select(all_of(cont_candidates)) %>%
+  drop_na()
+```
+
+## 2.2  Run PCA
+```{r pca}
+pca_obj <- prcomp(hmeq_pca, center = TRUE, scale. = TRUE)
+```
+
+## 2.3  Scree plot & variance explained
+```{r pca-scree, message=FALSE, warning=FALSE}
+library(factoextra)
+
+fviz_eig(pca_obj, addlabels = TRUE)
+```
+
+elbow at PC3. keep 3.
+
+## 2.4  Component loadings – what do they mean?
+```{r pca-loadings}
+round(pca_obj$rotation, 2)
+```
+
+PC-1 Overall size / wealth
+
+- High positive weights for IMP_VALUE, IMP_MORTDUE and LOAN.
+- Applicants with large property values, large outstanding mortgages and large requested loans receive a high PC-1 score; applicants with small balances fall at the negative end.
+- In practice PC-1 measures the *scale* of the applicant’s balance sheet.
+
+PC-2 Current leverage & stress
+
+- Dominated by a strong positive loading for IMP_DEBTINC (debt-to-income ratio) and strong negative loading for IMP_CLAGE (age of oldest credit line).
+- High PC-2 → high DTI and comparatively *young* credit history (short CLAGE) – i.e., more highly leveraged / potentially riskier borrowers.
+- Low PC-2 → seasoned credit files with low or moderate DTI.
+
+PC-3 Seasoned vs. stretched (orthogonal to PC-2)
+
+- Again driven by the two credit-quality variables but with *both* IMP_CLAGE (-0.71) and IMP_DEBTINC (-0.65) pulling the component in the same (negative) direction.
+- A *large negative* PC-3 score identifies borrowers who are both long-tenured and low-DTI (the “stable veterans”).
+- Positive scores denote either newer files, higher DTI or both – the opposite end of that stability spectrum.
+- Because PC-3 is orthogonal to PC-2, it separates this notion of “seasoned stability” from the leverage gradient captured by PC-2.
+
+PC-4 Requested loan vs. existing mortgage
+
+- Very large negative weight for LOAN (-0.91) and a positive weight for IMP_MORTDUE (0.35).
+- Negative PC-4: the *requested* loan dwarfs the existing mortgage balance – typical of cash-out or high-LTV requests.
+- Positive PC-4: relatively small new loan compared with what is still owed on the property – could signal a modest top-up or home-improvement loan.
+
+PC-5 Equity vs. mortgage balance (net-equity axis)
+
+- Strongly positive for IMP_MORTDUE (0.68) but strongly negative for IMP_VALUE (-0.72).
+- High PC-5 = mortgage balance is large compared with the property value (low equity).
+- Low PC-5 = high equity (property value greatly exceeds remaining mortgage).
+
+How you might use these insights
+
+- Risk modelling Include the PCs in a credit-risk or pricing model; PC-2 and PC-5, for example, directly capture leverage and equity.
+- Marketing segmentation Identify “large-balance / high-equity” customers (high PC-1, low PC-5) for refinance offers, or “small-balance / high-stress” customers (low PC-1, high PC-2) for debt-consolidation products.
+- Portfolio monitoring Track the distribution of new applications over time along PC-2 and PC-5 to anticipate shifts in overall portfolio risk.
+
+## 2.5  Scatter plot on first two PCs (no colouring)
+```{r pca-scatter}
+scores <- as_tibble(pca_obj$x[, 1:2]) %>%
+  set_names(c("PC1", "PC2"))
+
+ggplot(scores, aes(PC1, PC2)) +
+  geom_point(alpha = .5, size = 0.7) +
+  labs(title = "PCA score plot (first 2 PCs)")
+```
+
+# Step 3: Cluster Analysis - Find the Number of Clusters
+
+- Use the principal components from Step 2 for this step.
+- Using the methods presented in the lectures, complete a KMeans cluster analysis for N=1 to at least N=10. Feel free to take the number higher.
+- Print a scree plot of the clusters and determine how many clusters would be optimum. Justify your decision.
+
+```{r k-elbow}
+wss <- map_dbl(1:10, ~kmeans(scores, centers = .x, nstart = 25)$tot.withinss)
+plot(1:10, wss, type = "b",
+     xlab = "Number of clusters K", ylab = "Total within-SS",
+     main = "Elbow plot for K-means")
+```
+
+A clear bend appears at **K = 4**; adding more clusters yields diminishing returns.
+
+# Step 4: Cluster Analysis
+
+- Using the number of clusters from step 3, perform a cluster analysis using the principle components from Step 2.
+- Print the number of records in each cluster.
+- Print the cluster center points for each cluster
+- Convert the KMeans clusters into "flexclust" clusters
+- Print the barplot of the cluster. Describe the clusters from the barplot.
+- Score the training data using the flexclust clusters. In other words, determine which cluster they are in.
+- Perform a scatter plot using the first two Principal Components. Color the plot by the cluster membership. 
+- Add a legend to the plot.
+- Determine if the clusters predict loan default.
+
+```{r kmeans}
+set.seed(2025)
+km3 <- kmeans(scores, centers = 3, nstart = 50)
+km3$size                 # record count per cluster
+km3$centers              # PC-space centres
+```
+
+## 4.1  Convert to flexclust & barplot description
+```{r kcca, message=FALSE, warning=FALSE}
+library(flexclust)
+
+kcca3 <- as.kcca(km3, scores)
+barchart(kcca3)
+```
+
+Cluster 1: credit-stressed
+
+- Smallest properties / mortgages / requested loans
+- **Highest** debt-to-income and **shortest** credit history
+
+Cluster 2: conservatives
+
+- small balances but **very low** DTI and the **longest** credit history
+
+Cluster 3: moderate leverage
+
+- Largest properties / mortgages / requested loans
+- Average DTI and mid-length histories
+
+## 4.2  Attach cluster labels & visualise in PC space
+```{r pc-cluster-plot}
+scores$Cluster <- factor(km3$cluster)
+ggplot(scores, aes(PC1, PC2, colour = Cluster)) +
+  geom_point(alpha = .6, size = 0.8) +
+  labs(title = "3-cluster solution in PCA space") +
+  scale_colour_brewer(palette = "Dark2")
+```
+
+## 4.3  Do clusters predict default?
+```{r default-by-cluster}
+clust_df <- bind_cols(hmeq_pca, TARGET_BAD_FLAG = hmeq$TARGET_BAD_FLAG[complete.cases(hmeq_pca)],
+                      Cluster = scores$Cluster)
+
+table(clust_df$Cluster, clust_df$TARGET_BAD_FLAG) %>% addmargins()
+prop.table(table(clust_df$Cluster, clust_df$TARGET_BAD_FLAG), 1) %>% round(2)
+```
+
+yes
+
+# Step 5: Describe the Clusters Using Decision Trees
+
+- Using the original data from Step 2, predict cluster membership using a Decision Tree
+- Display the Decision Tree
+- Using the Decision Tree plot, describe or tell a story of each cluster. Comment on whether the clusters make sense.
+
+We try to reproduce the 3-way segmentation from the *original* variables (continuous + flags).
+
+```{r tree, message=FALSE, warning=FALSE}
+library(rpart)
+library(rpart.plot)
+
+hmeq_tree <- hmeq %>%
+  drop_na(all_of(cont_candidates)) %>%
+  mutate(Cluster = factor(km3$cluster))
+
+tree_mod <- rpart(Cluster ~ LOAN +
+                            IMP_MORTDUE +
+                            IMP_VALUE +
+                            IMP_CLAGE +
+                            IMP_DEBTINC,
+                  data  = hmeq_tree,
+                  method = "class",
+                  cp     = .002)
+
+rpart.plot(tree_mod,
+           main = "Tree describing 3 clusters",
+           extra = 104,
+           box.palette = "RdYlGn",
+           fallen.leaves = TRUE)
+```
+
+decision tree fit cluster
+
+# Step 6: Comment
+
+- Discuss how you might use these clusters in a corporate setting.
+
+high rate for credit stressed cluster
